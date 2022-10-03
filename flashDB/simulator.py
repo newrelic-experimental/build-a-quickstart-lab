@@ -1,6 +1,6 @@
 import random
 import time
-import db
+import db as db
 
 
 while(True):

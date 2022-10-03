@@ -1,6 +1,11 @@
 import os
 import random
 import datetime
+from sys import getsizeof
+
+from newrelic_telemetry_sdk import MetricClient, GaugeMetric, CountMetric, SummaryMetric
+
+metric_client = MetricClient(os.environ["NEW_RELIC_LICENSE_KEY"])
 
 db = {}
 stats = {
@@ -37,7 +42,6 @@ def read(key):
         stats["read_errors"] += 1
     stats["read_count"] += 1
     try_send("read")
-
 
 def create(key, value):
 
@@ -78,7 +82,43 @@ def try_send(type_):
 
     now = datetime.datetime.now()
     interval_ms = (now - last_push[type_]).total_seconds() * 1000
+    if interval_ms >= 2000:
+        send_metrics(type_, interval_ms)
 
+def send_metrics(type_, interval_ms):
+    
+    print("sending metrics...")
+
+    keys = GaugeMetric("fdb_keys", len(db))
+    db_size = GaugeMetric("fdb_size", getsizeof(db))
+
+    errors = CountMetric(
+        name=f"fdb_{type_}_errors",
+        value=stats[f"{type_}_errors"],
+        interval_ms=interval_ms
+    )
+
+    cache_hits = CountMetric(
+        name=f"fdb_cache_hits",
+        value=stats["cache_hit"],
+        interval_ms=interval_ms
+    )
+
+    response_times = stats[f"{type_}_response_times"]
+    response_time = SummaryMetric(
+        f"fdb_{type_}_responses",
+        count=len(response_times),
+        min=min(response_times),
+        max=max(response_times),
+        sum=sum(response_times),
+        interval_ms=interval_ms,
+    )
+
+    batch = [keys, db_size, errors, cache_hits, response_time]
+    response = metric_client.send_batch(batch)
+    response.raise_for_status()
+    print("Sent metrics successfully!")
+    clear(type_)
 
 def clear(type_):
     stats[f"{type_}_response_times"] = []
